@@ -41,10 +41,10 @@ COPY headroom/ headroom/
 COPY .git/ .git/ 
 
 ARG HEADROOM_EXTRAS=proxy,code
-RUN --mount=type=cache,id=cacheKey.uv-cache,target=/root/.cache/uv \
-    --mount=type=cache,id=cacheKey.cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cacheKey.cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cacheKey.build-target,target=/build/target \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
     uv pip install --system ".[${HEADROOM_EXTRAS}]"
 
 RUN HEADROOM_BUILD_VERSION="${HEADROOM_BUILD_VERSION}" PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}" python - <<'PY'
@@ -130,8 +130,8 @@ RUN cd /tmp && python -c "from headroom._core import DiffCompressor, SmartCrushe
     print(f'build-stage rust core verify OK: {DiffCompressor.__name__}, {SmartCrusher.__name__}')"
 
 # Build the native Rust reverse proxy binary
-RUN --mount=type=cache,id=cacheKey.cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cacheKey.build-target,target=/build/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
     cargo build --release --locked --bin headroom-proxy && \
     cp target/release/headroom-proxy /usr/local/bin/headroom-proxy
 
