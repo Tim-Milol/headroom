@@ -38,14 +38,13 @@ COPY pyproject.toml uv.lock README.md ./
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY headroom/ headroom/
-# Copy .git if exists for git revision check in next step
 COPY .git/ .git/ 
 
 ARG HEADROOM_EXTRAS=proxy,code
-RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
-    --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=build-target,target=/build/target \
+RUN --mount=type=cache,id=cacheKey-uv-cache,target=/root/.cache/uv \
+    --mount=type=cache,id=cacheKey-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cacheKey-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=cacheKey-build-target,target=/build/target \
     uv pip install --system ".[${HEADROOM_EXTRAS}]"
 
 RUN HEADROOM_BUILD_VERSION="${HEADROOM_BUILD_VERSION}" PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}" python - <<'PY'
@@ -131,8 +130,8 @@ RUN cd /tmp && python -c "from headroom._core import DiffCompressor, SmartCrushe
     print(f'build-stage rust core verify OK: {DiffCompressor.__name__}, {SmartCrusher.__name__}')"
 
 # Build the native Rust reverse proxy binary
-RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=build-target,target=/build/target \
+RUN --mount=type=cache,id=cacheKey-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cacheKey-build-target,target=/build/target \
     cargo build --release --locked --bin headroom-proxy && \
     cp target/release/headroom-proxy /usr/local/bin/headroom-proxy
 
@@ -168,8 +167,6 @@ WORKDIR ${RUNTIME_HOME}
 ENV HEADROOM_HOST=0.0.0.0 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
-
-# VOLUME instruction removed for Railway compatibility
 
 EXPOSE 8787
 
