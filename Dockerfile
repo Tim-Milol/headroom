@@ -35,7 +35,6 @@ COPY pyproject.toml uv.lock README.md ./
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY headroom/ headroom/
-COPY .git/ .git/ 
 
 ARG HEADROOM_EXTRAS=proxy,code
 RUN uv pip install --system ".[${HEADROOM_EXTRAS}]"
