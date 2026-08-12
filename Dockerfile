@@ -13,9 +13,6 @@ ARG HEADROOM_BUILD_VERSION=""
 # build-essential / g++ for any C extension wheels uv may need to build
 # from source. curl + ca-certificates are required by the rustup
 # bootstrap below. patchelf for maturin's wheel-link repair on linux.
-# No OpenSSL system deps required: the rustls-everywhere refactor
-# eliminated `openssl-sys` from our build tree by switching fastembed
-# to `hf-hub-rustls-tls` + `ort-download-binaries-rustls-tls`.
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
     build-essential \
@@ -27,10 +24,7 @@ RUN apt-get update && \
 
 RUN python -m pip install --no-cache-dir uv==${UV_VERSION}
 
-# Rust toolchain for the headroom._core extension. With single-wheel
-# architecture (post-#355), `pip install -e .` invokes maturin via
-# pyproject.toml's [build-system], which calls cargo. No more separate
-# headroom-core-py package.
+# Rust toolchain for the headroom._core extension.
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:${PATH}
@@ -39,23 +33,22 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 WORKDIR /build
 
-# Copy the full set of files maturin needs to build the wheel: the root
-# pyproject.toml + Cargo workspace + Rust crates + Python source. The
-# uv install builds + installs the wheel in one shot.
+# Copy the full set of files maturin needs to build the wheel:
 COPY pyproject.toml uv.lock README.md ./
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY headroom/ headroom/
+# Copy .git if exists for git revision check in next step
+COPY .git/ .git/ 
 
 ARG HEADROOM_EXTRAS=proxy,code
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
+    --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=build-target,target=/build/target \
     uv pip install --system ".[${HEADROOM_EXTRAS}]"
 
-RUN --mount=type=bind,source=.,target=/context,readonly \
-    HEADROOM_BUILD_VERSION="${HEADROOM_BUILD_VERSION}" PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}" python - <<'PY'
+RUN HEADROOM_BUILD_VERSION="${HEADROOM_BUILD_VERSION}" PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}" python - <<'PY'
 import hashlib
 import os
 from pathlib import Path
@@ -118,7 +111,7 @@ if not build_version:
     print("no Headroom build version override provided; using installed package metadata")
     raise SystemExit(0)
 if build_version == "source-build":
-    revision = git_revision(Path("/context"))
+    revision = git_revision(Path("/build"))
     build_version = (
         f"source-build+g{revision}"
         if revision
@@ -133,23 +126,13 @@ package_dir = Path(os.environ["PYTHON_SITE_PACKAGES"]) / "headroom"
 print("baked Headroom build version: " + build_version)
 PY
 
-# Build-stage smoke check: verify the extension loads end-to-end inside
-# the build image before we copy site-packages into the runtime image.
-# If this fails, the runtime image would fail Phase A0's fail-loud
-# startup check on every restart. Run from /tmp so cwd doesn't shadow
-# site-packages with /build/headroom/ (which has no _core.so since
-# maturin installed the .so into site-packages).
+# Build-stage smoke check
 RUN cd /tmp && python -c "from headroom._core import DiffCompressor, SmartCrusher; \
     print(f'build-stage rust core verify OK: {DiffCompressor.__name__}, {SmartCrusher.__name__}')"
 
-# Build the native Rust reverse proxy binary and stage it for the runtime
-# images (issue #976). These images already run "the proxy"; bundling the
-# native `headroom-proxy` binary lets operators front the Python proxy with
-# the Rust SigV4 / live-zone compression path from the same image. The
-# binary is copied out of the cache-mounted target dir into a persistent
-# path so the COPY in the runtime stages can pick it up.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/target \
+# Build the native Rust reverse proxy binary
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=build-target,target=/build/target \
     cargo build --release --locked --bin headroom-proxy && \
     cp target/release/headroom-proxy /usr/local/bin/headroom-proxy
 
@@ -166,7 +149,7 @@ RUN apt-get update && \
 
 COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
 COPY --from=builder /usr/local/bin/headroom /usr/local/bin/headroom
-# Native Rust reverse proxy binary (issue #976).
+# Native Rust reverse proxy binary
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
 
 RUN mkdir -p /home/nonroot /data && \
@@ -186,12 +169,7 @@ ENV HEADROOM_HOST=0.0.0.0 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Declare ~/.headroom as a volume so Docker (and ACA) can attach persistent
-# storage here.  Bare `docker run` gets an anonymous volume as a fallback so
-# state is never silently written to the ephemeral container layer.
-# RUNTIME_HOME defaults to /home/nonroot (the published image default); pass
-# --build-arg RUNTIME_HOME=/root when building with RUNTIME_USER=root.
-VOLUME ${RUNTIME_HOME}/.headroom
+# VOLUME instruction removed for Railway compatibility
 
 EXPOSE 8787
 
@@ -207,7 +185,7 @@ ARG RUNTIME_USER=nonroot
 ARG PYTHON_SITE_PACKAGES
 
 COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
-# Native Rust reverse proxy binary (issue #976).
+# Native Rust reverse proxy binary
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
 
 USER ${RUNTIME_USER}
