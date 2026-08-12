@@ -10,9 +10,6 @@ ARG UV_VERSION
 ARG PYTHON_SITE_PACKAGES
 ARG HEADROOM_BUILD_VERSION=""
 
-# build-essential / g++ for any C extension wheels uv may need to build
-# from source. curl + ca-certificates are required by the rustup
-# bootstrap below. patchelf for maturin's wheel-link repair on linux.
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
     build-essential \
@@ -41,11 +38,7 @@ COPY headroom/ headroom/
 COPY .git/ .git/ 
 
 ARG HEADROOM_EXTRAS=proxy,code
-RUN --mount=type=cache,id=cacheKey,target=/root/.cache/uv \
-    --mount=type=cache,id=cacheKey,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cacheKey,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cacheKey,target=/build/target \
-    uv pip install --system ".[${HEADROOM_EXTRAS}]"
+RUN uv pip install --system ".[${HEADROOM_EXTRAS}]"
 
 RUN HEADROOM_BUILD_VERSION="${HEADROOM_BUILD_VERSION}" PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}" python - <<'PY'
 import hashlib
@@ -130,9 +123,7 @@ RUN cd /tmp && python -c "from headroom._core import DiffCompressor, SmartCrushe
     print(f'build-stage rust core verify OK: {DiffCompressor.__name__}, {SmartCrusher.__name__}')"
 
 # Build the native Rust reverse proxy binary
-RUN --mount=type=cache,id=cacheKey,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cacheKey,target=/build/target \
-    cargo build --release --locked --bin headroom-proxy && \
+RUN cargo build --release --locked --bin headroom-proxy && \
     cp target/release/headroom-proxy /usr/local/bin/headroom-proxy
 
 # ---- Runtime stage (python-slim): supports root/nonroot via build arg ----
@@ -148,7 +139,6 @@ RUN apt-get update && \
 
 COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
 COPY --from=builder /usr/local/bin/headroom /usr/local/bin/headroom
-# Native Rust reverse proxy binary
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
 
 RUN mkdir -p /home/nonroot /data && \
@@ -182,7 +172,6 @@ ARG RUNTIME_USER=nonroot
 ARG PYTHON_SITE_PACKAGES
 
 COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
-# Native Rust reverse proxy binary
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
 
 USER ${RUNTIME_USER}
